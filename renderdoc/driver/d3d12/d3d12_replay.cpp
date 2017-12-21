@@ -1714,6 +1714,10 @@ extern "C" __declspec(dllexport) HRESULT
     __cdecl RENDERDOC_CreateWrappedD3D12Device(IUnknown *pAdapter,
                                                D3D_FEATURE_LEVEL MinimumFeatureLevel, REFIID riid,
                                                void **ppDevice);
+
+extern "C" __declspec(dllexport) HRESULT
+    __cdecl RENDERDOC_CreateWrappedDXGIFactory1(REFIID riid, void **ppFactory);
+
 ID3DDevice *GetD3D12DeviceIfAlloc(IUnknown *dev);
 
 ReplayStatus D3D12_CreateReplayDevice(RDCFile *rdc, IReplayDriver **driver)
@@ -1790,16 +1794,42 @@ ReplayStatus D3D12_CreateReplayDevice(RDCFile *rdc, IReplayDriver **driver)
 
   D3D12Replay::PreDeviceInitCounters();
 
-  ID3D12Device *dev = NULL;
-  HRESULT hr = RENDERDOC_CreateWrappedD3D12Device(NULL, initParams.MinimumFeatureLevel,
-                                                  __uuidof(ID3D12Device), (void **)&dev);
+  IDXGIFactory4 *factory = NULL;
+  HRESULT hr = RENDERDOC_CreateWrappedDXGIFactory1(__uuidof(IDXGIFactory4), (void **)&factory);
 
   if(FAILED(hr))
+  {
+    RDCERR("Couldn't create DXGI factory");
+
+    return ReplayStatus::APIHardwareUnsupported;
+  }
+
+  ID3D12Device *dev = NULL;
+  IDXGIAdapter1 *adapter = NULL;
+  for (int i = 0; DXGI_ERROR_NOT_FOUND != factory->EnumAdapters1(i, &adapter); i++)
+  {
+    hr = RENDERDOC_CreateWrappedD3D12Device(adapter, initParams.MinimumFeatureLevel,
+         __uuidof(ID3D12Device), (void **)&dev);
+
+    if(SUCCEEDED(hr))
+    {
+      break;
+    }
+    else {
+      SAFE_RELEASE(adapter);
+    }
+  }
+
+  SAFE_RELEASE(factory);
+
+  if(!dev)
   {
     RDCERR("Couldn't create a d3d12 device :(.");
 
     return ReplayStatus::APIHardwareUnsupported;
   }
+
+  SAFE_RELEASE(adapter);
 
   WrappedID3D12Device *wrappedDev = (WrappedID3D12Device *)dev;
   wrappedDev->SetInitParams(initParams, ver);
